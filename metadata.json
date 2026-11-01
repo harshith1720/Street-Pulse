@@ -1,0 +1,6 @@
+{
+  "name": "StreetPulse",
+  "description": "Smart Streetlight Fault Detection, Citizen Reporting, Maintenance Monitoring, and Multi-Layer Repair Verification Platform.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
