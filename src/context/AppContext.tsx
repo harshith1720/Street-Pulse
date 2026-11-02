@@ -141,9 +141,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             description: item.description || item.title || '',
             createdAt: item.created_at || new Date().toISOString(),
             updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
-            timeline: item.timeline || []
-          }));
-          setComplaints(mappedComplaints);
+            timeline: item.timeline || [
+              {
+                status: item.status || 'submitted',
+                timestamp: item.created_at || new Date().toISOString(),
+                updatedBy: 'System',
+                notes: 'Report loaded from database.'
+              }
+            ]
+          })) as Complaint[];
         }
       }
     }
