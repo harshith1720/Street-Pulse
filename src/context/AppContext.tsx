@@ -15,6 +15,7 @@ import {
   INITIAL_STAFF, 
   INITIAL_NOTIFICATIONS 
 } from '../lib/mockData';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 export type UserRole = 'citizen' | 'admin' | 'staff';
 export type AppLanguage = 'en' | 'kn';
@@ -34,7 +35,7 @@ interface AppContextType {
   setActiveTab: (tab: string) => void;
   selectedComplaintId: string | null;
   setSelectedComplaintId: (id: string | null) => void;
-  submitComplaint: (data: Omit<Complaint, 'id' | 'createdAt' | 'updatedAt' | 'timeline' | 'status'>) => string;
+  submitComplaint: (data: Omit<Complaint, 'id' | 'createdAt' | 'updatedAt' | 'timeline' | 'status'>) => Promise<string>;
   updateComplaintStatus: (id: string, status: ComplaintStatus, updatedBy: string, notes?: string) => void;
   assignStaff: (complaintId: string, staffId: string) => void;
   updatePriority: (complaintId: string, priority: PriorityLevel) => void;
@@ -115,7 +116,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activeTab, setActiveTab] = useState<string>('home');
   const [selectedComplaintId, setSelectedComplaintId] = useState<string | null>(null);
 
-  // Synchronize state to localStorage
+  // 1. Fetch complaints from Supabase on mount (if available)
+  useEffect(() => {
+    async function fetchSupabaseComplaints() {
+      if (isSupabaseConfigured && supabase) {
+        const { data, error } = await supabase
+          .from('Report')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && data && data.length > 0) {
+          // Map database schema fields to frontend Complaint objects
+          const mappedComplaints: Complaint[] = data.map((item: any) => ({
+            id: item.id?.toString() || `SP-${Date.now()}`,
+            poleId: item.pole_id || item.location || 'N/A',
+            faultCategory: item.fault_category || 'Streetlight Dark',
+            streetName: item.street_name || item.location || 'Main Road',
+            area: item.area || 'Ward Area',
+            ward: item.ward || 'Ward 1',
+            lat: item.lat || 12.9716,
+            lng: item.lng || 77.5946,
+            status: item.status || 'submitted',
+            priority: item.priority || 'medium',
+            description: item.description || item.title || '',
+            createdAt: item.created_at || new Date().toISOString(),
+            updatedAt: item.updated_at || item.created_at || new Date().toISOString(),
+            timeline: item.timeline || []
+          }));
+          setComplaints(mappedComplaints);
+        }
+      }
+    }
+    fetchSupabaseComplaints();
+  }, []);
+
+  // Synchronize state to localStorage as local fallback
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.COMPLAINTS, JSON.stringify(complaints));
   }, [complaints]);
@@ -140,7 +175,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem(STORAGE_KEYS.ROLE, currentRole);
   }, [currentRole]);
 
-  const submitComplaint = (data: Omit<Complaint, 'id' | 'createdAt' | 'updatedAt' | 'timeline' | 'status'>): string => {
+  // Submit complaint (Inserts to Supabase & syncs local state)
+  const submitComplaint = async (
+    data: Omit<Complaint, 'id' | 'createdAt' | 'updatedAt' | 'timeline' | 'status'>
+  ): Promise<string> => {
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const newId = `SP-2026-${randomSuffix}`;
     const now = new Date().toISOString();
@@ -160,6 +198,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       ]
     };
+
+    // Push to Supabase if configured
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase.from('Report').insert([
+        {
+          title: data.description || `Fault on ${data.streetName}`,
+          description: data.description,
+          status: 'submitted',
+          location: `${data.streetName}, ${data.area}`
+        }
+      ]);
+      if (error) {
+        console.error('Supabase sync error:', error.message);
+      }
+    }
 
     setComplaints(prev => [newComplaint, ...prev]);
 
@@ -227,7 +280,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
-    // Update staff activeJobsCount
     setStaff(prev =>
       prev.map(s => (s.id === staffId ? { ...s, activeJobsCount: s.activeJobsCount + 1 } : s))
     );
@@ -379,7 +431,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
-    // If approved, update staff completed count
     if (decision === 'approved') {
       const complaint = complaints.find(c => c.id === complaintId);
       if (complaint?.assignedStaffId) {
@@ -426,7 +477,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setComplaints(prev =>
       prev.map(c => {
         if (c.id === complaintId) {
-          // If citizen states "still not working", REOPEN the complaint!
           const isReopen = status === 'still_not_working';
           const newStatus: ComplaintStatus = isReopen ? 'reopened' : c.status;
 
